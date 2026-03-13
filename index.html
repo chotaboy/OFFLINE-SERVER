@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Doctor Dashboard - Token Queue</title>
+<link rel="manifest" href="manifest.json">
+
+<style>
+
+body {
+  margin: 0;
+  font-family: 'Segoe UI';
+  background: #f4f6f9;
+}
+
+.navbar {
+  background: #1e88e5;
+  color: white;
+  padding: 15px;
+  font-size: 20px;
+  font-weight: bold;
+  text-align: center;
+}
+
+.container {
+  display: flex;
+}
+
+.sidebar {
+  width: 220px;
+  background: #263238;
+  color: white;
+  height: 100vh;
+  padding-top: 30px;
+}
+
+.sidebar h3 {
+  text-align: center;
+  margin-bottom: 30px;
+}
+
+.sidebar p {
+  padding: 12px 20px;
+  cursor: pointer;
+}
+
+.sidebar p:hover {
+  background: #37474f;
+}
+
+.main {
+  flex: 1;
+  padding: 30px;
+  display: flex;
+  gap: 30px;
+}
+
+.left-panel {
+  width: 350px;
+}
+
+.right-panel {
+  flex: 1;
+}
+
+.box {
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0px 3px 10px rgba(0,0,0,0.1);
+  margin-bottom: 20px;
+}
+
+#tokenList {
+  max-height: 300px;
+  overflow-y: auto;
+  margin-top: 10px;
+}
+
+.token-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px;
+  margin-bottom: 8px;
+  background: #e3f2fd;
+  border-radius: 6px;
+}
+
+.token-item span {
+  cursor: pointer;
+}
+
+.delete-btn {
+  background: #e53935;
+  color: white;
+  border: none;
+  padding: 5px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+input {
+  width: 100%;
+  padding: 8px;
+  margin-top: 8px;
+  border-radius: 5px;
+  border: 1px solid #ccc;
+}
+
+textarea {
+  width: 100%;
+  height: 120px;
+  padding: 10px;
+  border-radius: 6px;
+  border: 1px solid #ccc;
+  margin-top: 10px;
+}
+
+button {
+  padding: 10px 15px;
+  background: #1e88e5;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-top: 10px;
+}
+
+.status {
+  display: inline-block;
+  padding: 5px 10px;
+  background: #4caf50;
+  color: white;
+  border-radius: 20px;
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+
+#netStatus {
+  margin: 10px;
+  font-weight: bold;
+}
+
+</style>
+</head>
+
+<body>
+
+<div class="navbar">🏥 Doctor Dashboard - Token System</div>
+
+<div id="netStatus"></div>
+
+<div class="container">
+
+  <div class="sidebar">
+    <h3>Menu</h3>
+    <p>Dashboard</p>
+    <p>Patients</p>
+    <p>Appointments</p>
+    <p>Settings</p>
+  </div>
+
+  <div class="main">
+
+    <div class="left-panel">
+
+      <div class="box">
+        <h3>Manual Add to Queue</h3>
+        <input type="text" id="manualId" placeholder="Enter Patient ID">
+        <button onclick="addQueue()">Add to Queue</button>
+      </div>
+
+      <div class="box">
+        <h3>Token Queue</h3>
+        <div id="tokenList"></div>
+        <button onclick="nextPatient()">Next Patient ➡</button>
+      </div>
+
+    </div>
+
+    <div class="right-panel">
+
+      <div class="box" id="patientCard" style="display:none">
+
+        <div class="status">Active</div>
+
+        <h2>Patient Details</h2>
+
+        <p><b>ID:</b> <span id="id"></span></p>
+        <p><b>Name:</b> <span id="name"></span></p>
+        <p><b>Age:</b> <span id="age"></span></p>
+        <p><b>Mobile:</b> <span id="mobile"></span></p>
+        <p><b>Date:</b> <span id="date"></span></p>
+        <p><b>Problem:</b> <span id="description"></span></p>
+
+        <hr>
+
+        <h3>Doctor Notes</h3>
+
+        <textarea id="doctorNotes"></textarea>
+
+        <button onclick="saveNotes()">Save Notes</button>
+
+      </div>
+
+    </div>
+
+  </div>
+
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+
+<script>
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBmkYgnVEWxvBavGtBuuz5Nfc5eV3z9YKg",
+  authDomain: "op-gh-a31ef.firebaseapp.com",
+  databaseURL: "https://op-gh-a31ef-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "op-gh-a31ef"
+};
+
+firebase.initializeApp(firebaseConfig);
+
+const db = firebase.database();
+const tokenList = document.getElementById("tokenList");
+
+let currentPatient = "";
+
+function updateStatus() {
+  const s = document.getElementById("netStatus");
+  s.innerHTML = navigator.onLine ? "🟢 Online" : "🔴 Offline Mode";
+}
+
+updateStatus();
+
+window.addEventListener("online", updateStatus);
+window.addEventListener("offline", updateStatus);
+
+function saveOffline(data) {
+  let q = JSON.parse(localStorage.getItem("offlineQueue")) || [];
+  q.push(data);
+  localStorage.setItem("offlineQueue", JSON.stringify(q));
+}
+
+async function syncOffline() {
+  let q = JSON.parse(localStorage.getItem("offlineQueue")) || [];
+  for (let item of q) {
+    await db.ref("queue/" + item.token).set(item);
+  }
+  localStorage.removeItem("offlineQueue");
+}
+
+window.addEventListener("online", syncOffline);
+
+async function addQueue() {
+
+  const id = document.getElementById("manualId").value.trim();
+  if (!id) return alert("Enter Patient ID");
+
+  const patientSnap = await db.ref("patients/" + id).once("value");
+
+  if (!patientSnap.exists()) {
+    alert("Patient Not Found");
+    return;
+  }
+
+  const queueSnapshot = await db.ref("queue").once("value");
+
+  let nextToken = 1;
+
+  if (queueSnapshot.exists()) {
+    const data = queueSnapshot.val();
+    const tokens = Object.values(data).map(q => q.token);
+    nextToken = Math.max(...tokens) + 1;
+  }
+
+  const data = {
+    patientId: id,
+    token: nextToken,
+    status: "waiting"
+  };
+
+  if (navigator.onLine) {
+    await db.ref("queue/" + nextToken).set(data);
+  } else {
+    saveOffline(data);
+    alert("Saved Offline");
+  }
+
+  document.getElementById("manualId").value = "";
+}
+
+db.ref("queue").on("value", async snapshot => {
+
+  tokenList.innerHTML = "";
+
+  if (!snapshot.exists()) return;
+
+  const data = snapshot.val();
+
+  const queueArray = Object.entries(data)
+    .sort((a,b)=> a[1].token - b[1].token);
+
+  for (let [key,item] of queueArray) {
+
+    const patientSnap = await db.ref("patients/" + item.patientId).once("value");
+
+    if (!patientSnap.exists()) continue;
+
+    const patient = patientSnap.val();
+
+    const div = document.createElement("div");
+    div.className = "token-item";
+
+    const span = document.createElement("span");
+    span.innerText = "Token " + item.token + " - " + patient.name;
+    span.onclick = () => showPatient(item.patientId);
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.innerText = "Delete";
+    deleteBtn.className = "delete-btn";
+    deleteBtn.onclick = () => deleteToken(key);
+
+    div.appendChild(span);
+    div.appendChild(deleteBtn);
+
+    tokenList.appendChild(div);
+  }
+
+});
+
+function deleteToken(key) {
+  if (confirm("Delete this token?")) {
+    db.ref("queue/" + key).remove();
+    document.getElementById("patientCard").style.display = "none";
+  }
+}
+
+async function showPatient(id) {
+
+  const snap = await db.ref("patients/" + id).once("value");
+
+  if (!snap.exists()) return;
+
+  const data = snap.val();
+
+  currentPatient = id;
+
+  document.getElementById("id").innerText = id;
+  document.getElementById("name").innerText = data.name || "";
+  document.getElementById("age").innerText = data.age || "";
+  document.getElementById("mobile").innerText = data.mobile || "";
+  document.getElementById("description").innerText = data.description || "";
+  document.getElementById("doctorNotes").value = data.doctorNotes || "";
+
+  document.getElementById("date").innerText =
+    new Date().toLocaleDateString("en-GB");
+
+  document.getElementById("patientCard").style.display = "block";
+}
+
+async function saveNotes() {
+
+  if (!currentPatient) return alert("Select Patient First");
+
+  const notes = document.getElementById("doctorNotes").value;
+
+  await db.ref("patients/" + currentPatient + "/doctorNotes").set(notes);
+
+  alert("Notes Saved");
+}
+
+async function nextPatient() {
+
+  const snapshot = await db.ref("queue").once("value");
+
+  if (!snapshot.exists()) return;
+
+  const data = snapshot.val();
+
+  const firstKey = Object.keys(data)
+    .sort((a,b)=> data[a].token - data[b].token)[0];
+
+  await db.ref("queue/" + firstKey).remove();
+
+  document.getElementById("patientCard").style.display = "none";
+}
+
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("service-worker.js");
+}
+
+</script>
+
+</body>
+</html>
