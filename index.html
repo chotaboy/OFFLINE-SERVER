@@ -3,7 +3,6 @@
 <head>
 <meta charset="UTF-8">
 <title>Doctor Dashboard - Token Queue</title>
-<link rel="manifest" href="manifest.json">
 
 <style>
 
@@ -67,7 +66,7 @@ flex:1;
 background:white;
 padding:20px;
 border-radius:8px;
-box-shadow:0px 3px 10px rgba(0,0,0,0.1);
+box-shadow:0 3px 10px rgba(0,0,0,0.1);
 margin-bottom:20px;
 }
 
@@ -85,6 +84,10 @@ padding:10px;
 margin-bottom:8px;
 background:#e3f2fd;
 border-radius:6px;
+}
+
+.token-item span{
+cursor:pointer;
 }
 
 .delete-btn{
@@ -145,6 +148,7 @@ font-weight:bold;
 <body>
 
 <div class="navbar">🏥 Doctor Dashboard - Token System</div>
+
 <div id="netStatus"></div>
 
 <div class="container">
@@ -195,6 +199,7 @@ font-weight:bold;
 <h3>Doctor Notes</h3>
 
 <textarea id="doctorNotes"></textarea>
+
 <button onclick="saveNotes()">Save Notes</button>
 
 </div>
@@ -202,6 +207,7 @@ font-weight:bold;
 </div>
 
 </div>
+
 </div>
 
 <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
@@ -209,7 +215,9 @@ font-weight:bold;
 
 <script>
 
-const firebaseConfig = {
+/* FIREBASE CONFIG */
+
+const firebaseConfig={
 apiKey:"AIzaSyBmkYgnVEWxvBavGtBuuz5Nfc5eV3z9YKg",
 authDomain:"op-gh-a31ef.firebaseapp.com",
 databaseURL:"https://op-gh-a31ef-default-rtdb.asia-southeast1.firebasedatabase.app",
@@ -217,146 +225,271 @@ projectId:"op-gh-a31ef"
 };
 
 firebase.initializeApp(firebaseConfig);
+
 const db=firebase.database();
+const tokenList=document.getElementById("tokenList");
 
 let currentPatient="";
 
+/* NETWORK STATUS */
+
 function updateStatus(){
+
 const s=document.getElementById("netStatus");
-s.innerHTML=navigator.onLine?"🟢 Online":"🔴 Offline Mode";
-}
-updateStatus();
 
-window.addEventListener("online",()=>{
-updateStatus();
+if(navigator.onLine){
+
+s.innerHTML="🟢 Online";
+
 syncOffline();
-loadQueue();
-});
 
-window.addEventListener("offline",()=>{
+loadOnlineQueue();
+
+}
+else{
+
+s.innerHTML="🔴 Offline Mode";
+
+loadOfflineQueue();
+
+}
+
+}
+
 updateStatus();
-loadQueue();
-});
 
-function getLocalQueue(){
-return JSON.parse(localStorage.getItem("queue"))||[];
+window.addEventListener("online",updateStatus);
+window.addEventListener("offline",updateStatus);
+
+/* OFFLINE QUEUE SAVE */
+
+function saveOffline(data){
+
+let q=JSON.parse(localStorage.getItem("offlineQueue"))||[];
+
+q.push(data);
+
+localStorage.setItem("offlineQueue",JSON.stringify(q));
+
+loadOfflineQueue();
+
 }
 
-function saveLocalQueue(q){
-localStorage.setItem("queue",JSON.stringify(q));
+/* SYNC OFFLINE QUEUE */
+
+async function syncOffline(){
+
+let q=JSON.parse(localStorage.getItem("offlineQueue"))||[];
+
+for(let item of q){
+
+await db.ref("queue/"+item.token).set(item);
+
 }
 
-function getLocalPatients(){
-return JSON.parse(localStorage.getItem("patients"))||{};
+localStorage.removeItem("offlineQueue");
+
 }
 
-function saveLocalPatients(p){
-localStorage.setItem("patients",JSON.stringify(p));
-}
+/* ADD QUEUE */
 
 async function addQueue(){
 
 const id=document.getElementById("manualId").value.trim();
-if(!id)return alert("Enter Patient ID");
 
-let patient;
+if(!id) return alert("Enter Patient ID");
 
-if(navigator.onLine){
+const patientSnap=await db.ref("patients/"+id).once("value");
 
-const snap=await db.ref("patients/"+id).once("value");
-if(!snap.exists())return alert("Patient Not Found");
+if(!patientSnap.exists()){
 
-patient=snap.val();
+alert("Patient Not Found");
 
-let patients=getLocalPatients();
-patients[id]=patient;
-saveLocalPatients(patients);
+return;
 
-}else{
-
-const patients=getLocalPatients();
-if(!patients[id])return alert("Patient not cached offline");
-
-patient=patients[id];
 }
 
-let queue=getLocalQueue();
+const patient=patientSnap.val();
+
+const queueSnapshot=await db.ref("queue").once("value");
 
 let nextToken=1;
-if(queue.length>0){
-nextToken=Math.max(...queue.map(q=>q.token))+1;
+
+if(queueSnapshot.exists()){
+
+const data=queueSnapshot.val();
+
+const tokens=Object.values(data).map(q=>q.token);
+
+nextToken=Math.max(...tokens)+1;
+
 }
 
-const item={
+const data={
 patientId:id,
-token:nextToken
+name:patient.name,
+age:patient.age,
+mobile:patient.mobile,
+description:patient.description,
+token:nextToken,
+status:"waiting"
 };
 
-queue.push(item);
-saveLocalQueue(queue);
-
 if(navigator.onLine){
-db.ref("queue/"+nextToken).set(item);
+
+await db.ref("queue/"+nextToken).set(data);
+
+}
+else{
+
+saveOffline(data);
+
+alert("Saved Offline");
+
 }
 
 document.getElementById("manualId").value="";
-loadQueue();
+
 }
 
-function loadQueue(){
+/* ONLINE QUEUE */
 
-const tokenList=document.getElementById("tokenList");
+function loadOnlineQueue(){
+
+db.ref("queue").on("value",snapshot=>{
+
 tokenList.innerHTML="";
 
-const queue=getLocalQueue();
-const patients=getLocalPatients();
+if(!snapshot.exists()) return;
 
-queue.sort((a,b)=>a.token-b.token);
+const data=snapshot.val();
 
-queue.forEach(item=>{
+const queueArray=Object.entries(data).sort((a,b)=>a[1].token-b[1].token);
 
-const patient=patients[item.patientId]||{name:"Unknown"};
+queueArray.forEach(([key,item])=>{
+
+createToken(item,key);
+
+});
+
+});
+
+}
+
+/* OFFLINE QUEUE */
+
+function loadOfflineQueue(){
+
+tokenList.innerHTML="";
+
+let q=JSON.parse(localStorage.getItem("offlineQueue"))||[];
+
+q.sort((a,b)=>a.token-b.token);
+
+q.forEach(item=>{
+
+createToken(item,item.token);
+
+});
+
+}
+
+/* TOKEN UI */
+
+function createToken(item,key){
 
 const div=document.createElement("div");
 div.className="token-item";
 
 const span=document.createElement("span");
-span.innerText="Token "+item.token+" - "+patient.name;
+
+span.innerText="Token "+item.token+" - "+(item.name||item.patientId);
+
 span.onclick=()=>showPatient(item.patientId);
 
-const del=document.createElement("button");
-del.innerText="Delete";
-del.className="delete-btn";
-del.onclick=()=>deleteToken(item.token);
+const deleteBtn=document.createElement("button");
+
+deleteBtn.innerText="Delete";
+deleteBtn.className="delete-btn";
+
+deleteBtn.onclick=()=>deleteToken(key);
 
 div.appendChild(span);
-div.appendChild(del);
+div.appendChild(deleteBtn);
 
 tokenList.appendChild(div);
 
-});
 }
 
-function deleteToken(token){
+/* DELETE TOKEN */
 
-let queue=getLocalQueue();
-queue=queue.filter(q=>q.token!==token);
-saveLocalQueue(queue);
+function deleteToken(key){
+
+if(!confirm("Delete this token?")) return;
 
 if(navigator.onLine){
-db.ref("queue/"+token).remove();
+
+db.ref("queue/"+key).remove();
+
+}
+else{
+
+deleteOfflineToken(key);
+
 }
 
-loadQueue();
 document.getElementById("patientCard").style.display="none";
+
 }
 
-function showPatient(id){
+function deleteOfflineToken(token){
 
-const patients=getLocalPatients();
-const data=patients[id];
+let q=JSON.parse(localStorage.getItem("offlineQueue"))||[];
 
-if(!data)return;
+q=q.filter(item=>item.token!=token);
+
+localStorage.setItem("offlineQueue",JSON.stringify(q));
+
+loadOfflineQueue();
+
+}
+
+/* SHOW PATIENT */
+
+async function showPatient(id){
+
+let data;
+
+if(navigator.onLine){
+
+const snap=await db.ref("patients/"+id).once("value");
+
+if(!snap.exists()) return;
+
+data=snap.val();
+
+let cache=JSON.parse(localStorage.getItem("patientCache"))||{};
+
+cache[id]=data;
+
+localStorage.setItem("patientCache",JSON.stringify(cache));
+
+}
+else{
+
+let cache=JSON.parse(localStorage.getItem("patientCache"))||{};
+
+if(!cache[id]){
+
+alert("Patient not available offline");
+
+return;
+
+}
+
+data=cache[id];
+
+}
 
 currentPatient=id;
 
@@ -365,78 +498,81 @@ document.getElementById("name").innerText=data.name||"";
 document.getElementById("age").innerText=data.age||"";
 document.getElementById("mobile").innerText=data.mobile||"";
 document.getElementById("description").innerText=data.description||"";
-
-document.getElementById("date").innerText=
-new Date().toLocaleDateString("en-GB");
-
 document.getElementById("doctorNotes").value=data.doctorNotes||"";
 
+document.getElementById("date").innerText=new Date().toLocaleDateString("en-GB");
+
 document.getElementById("patientCard").style.display="block";
+
 }
 
-function saveNotes(){
+/* SAVE NOTES */
 
-if(!currentPatient)return alert("Select Patient First");
+async function saveNotes(){
+
+if(!currentPatient) return alert("Select Patient First");
 
 const notes=document.getElementById("doctorNotes").value;
 
-let patients=getLocalPatients();
-patients[currentPatient].doctorNotes=notes;
-saveLocalPatients(patients);
-
 if(navigator.onLine){
-db.ref("patients/"+currentPatient+"/doctorNotes").set(notes);
+
+await db.ref("patients/"+currentPatient+"/doctorNotes").set(notes);
+
+}
+else{
+
+let cache=JSON.parse(localStorage.getItem("patientCache"))||{};
+
+if(cache[currentPatient]){
+
+cache[currentPatient].doctorNotes=notes;
+
+localStorage.setItem("patientCache",JSON.stringify(cache));
+
+}
+
 }
 
 alert("Notes Saved");
+
 }
 
-function nextPatient(){
+/* NEXT PATIENT */
 
-let queue=getLocalQueue();
-if(queue.length==0)return;
-
-queue.sort((a,b)=>a.token-b.token);
-
-const first=queue.shift();
-saveLocalQueue(queue);
+async function nextPatient(){
 
 if(navigator.onLine){
-db.ref("queue/"+first.token).remove();
+
+const snapshot=await db.ref("queue").once("value");
+
+if(!snapshot.exists()) return;
+
+const data=snapshot.val();
+
+const firstKey=Object.keys(data)
+.sort((a,b)=>data[a].token-data[b].token)[0];
+
+await db.ref("queue/"+firstKey).remove();
+
+}
+else{
+
+let q=JSON.parse(localStorage.getItem("offlineQueue"))||[];
+
+if(q.length==0) return;
+
+q.sort((a,b)=>a.token-b.token);
+
+q.shift();
+
+localStorage.setItem("offlineQueue",JSON.stringify(q));
+
+loadOfflineQueue();
+
 }
 
-loadQueue();
 document.getElementById("patientCard").style.display="none";
-}
 
-async function syncOffline(){
-
-const queue=getLocalQueue();
-
-for(const item of queue){
-await db.ref("queue/"+item.token).set(item);
-}
-
-}
-
-async function loadFromFirebase(){
-
-if(!navigator.onLine)return;
-
-const snap=await db.ref("queue").once("value");
-if(!snap.exists())return;
-
-const data=snap.val();
-const arr=Object.values(data);
-
-saveLocalQueue(arr);
-
-}
-
-loadFromFirebase().then(loadQueue);
-
-if("serviceWorker" in navigator){
-navigator.serviceWorker.register("service-worker.js");
 }
 
 </script>
